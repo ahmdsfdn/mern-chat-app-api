@@ -4,10 +4,10 @@ const dotenv = require('dotenv');
 const jwt = require('jsonwebtoken');
 const cookieParser = require('cookie-parser');
 const User = require('./models/User.js');
+const Message = require('./models/Message.js');
 const cors = require('cors');
 const bcrypt = require("bcryptjs");
 const ws = require("ws");
-
 dotenv.config();
 mongoose 
  .connect(process.env.MONGO_URL_2, {
@@ -26,17 +26,47 @@ app.use(cors({
     origin: process.env.CLIENT_URL,
 }));
 
+async function getUserDataFromRequest(req) {
+    return new Promise((resolve, reject) => {
+        const token = req.cookies?.token;
+        if (token){
+            jwt.verify(token, jwtSecret, {}, (err, userData)=>{
+                if(err) throw err;
+                console.log(userData);
+                resolve(userData)
+            });
+        } else {
+            reject('no token');
+        }
+    })
+}
+
 app.get('/test', (req, res) => {
     res.json('test ok');
+});
+
+app.get('/messages/:userId', async (req, res) => {
+    const {userId} = req.params;
+    const userData = await getUserDataFromRequest(req);
+    const ourUserId = userData.userId;
+
+    const messages = await Message.find({
+        sender: {$in:[userId, ourUserId]},
+        recipient: {$in:[userId, ourUserId]},
+    }).sort({createdAt: 1});
+
+    res.json(messages);
 });
 
 app.get('/profile', (req, res) => {
     const token = req.cookies?.token;
     if (token){
-    jwt.verify(token, jwtSecret, {}, (err, userData)=>{
-        if(err) throw err;
-        res.json(userData);
-    });} else {
+        jwt.verify(token, jwtSecret, {}, (err, userData)=>{
+            if(err) throw err;
+            res.json(userData);
+        });
+    }
+     else {
         res.status(401).json('no token')
     }
 });
@@ -100,13 +130,14 @@ wss.on('connection',(connection, req) => {
     }
    }
    
-   connection.on('message', (message, isBinary) => {
-    console.log(isBinary ? message.toString() : message);
-   });
+//    connection.on('message', (message, isBinary) => {
+//     console.log(isBinary ? message.toString() : message);
+//    });
 
    // notify everyone about online people (when someone connnects)
    [...wss.clients].forEach(client => {
-    client.send(JSON.stringify(
+    client.send(
+        JSON.stringify(
         {
             online: [...wss.clients].map(c => ({
                 userId: c.userId,
@@ -115,6 +146,29 @@ wss.on('connection',(connection, req) => {
         }
     ))
    });
+
+   connection.on('message', async (message) => {
+    const messageData = JSON.parse(message.toString());
+    const {recipient, text} = messageData.message;
+    
+    if(recipient && text){
+
+        const messageDoc = await Message.create({
+            sender: connection.userId,
+            recipient,
+            text
+        });
+
+        [...wss.clients]
+        .filter(c => c.userId === recipient)
+        .forEach(c => c.send(JSON.stringify({
+            text,
+            sender: connection.userId,
+            recipient,
+            _id:messageDoc._id
+        })));
+    }
+   })
 })
 
 console.log('work')
