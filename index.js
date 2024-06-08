@@ -107,6 +107,7 @@ app.post("/register", async (req, res) => {
   const { username, password } = req.body;
   try {
     const hashedPassword = bcrypt.hashSync(password, bcryptSalt);
+
     const createdUser = await User.create({
       username: username,
       password: hashedPassword,
@@ -127,7 +128,9 @@ app.post("/register", async (req, res) => {
       }
     );
   } catch (err) {
-    if (err) throw err;
+    if (err.code === 11000) {
+      return res.status(400).json({ message: "Username already exists" });
+    }
     res.status(500).json("error");
   }
 });
